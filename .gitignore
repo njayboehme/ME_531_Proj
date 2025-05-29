@@ -321,3 +321,6 @@ quadruped_pympc/controllers/gradient/nominal/c_generated_code_gait_adaptive/
 ros2/msgs_ws/build/
 ros2/msgs_ws/install/
 ros2/msgs_ws/log/
+
+# ME 531 Proj
+tests/
