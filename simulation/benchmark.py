@@ -16,6 +16,7 @@ from gym_quadruped.quadruped_env import QuadrupedEnv
 from gym_quadruped.utils.mujoco.visual import render_sphere, render_vector
 from gym_quadruped.utils.quadruped_utils import LegsAttr
 from tqdm import tqdm
+import pickle
 
 # Helper functions for plotting
 from quadruped_pympc.helpers.quadruped_utils import plot_swing_mujoco
@@ -46,7 +47,7 @@ if __name__ == "__main__":
     from quadruped_pympc import config as cfg
 
     qpympc_cfg = cfg
-    render = True
+    render = False
 
     # Run the simulation with the desired configuration.....
     # run_simulation(qpympc_cfg=qpympc_cfg)
@@ -151,9 +152,6 @@ if __name__ == "__main__":
             "swing_time",
             "phase_signal",
             "lift_off_positions",
-            # "base_lin_vel_err",
-            # "base_ang_vel_err",
-            # "base_poz_z_err",
         )
 
         quadrupedpympc_wrapper = QuadrupedPyMPC_Wrapper(
@@ -164,25 +162,16 @@ if __name__ == "__main__":
         )
 
         # Data recording -------------------------------------------------------------------------------------------
-        if RECORDING_PATH is not None:
-            from gym_quadruped.utils.data.h5py import H5Writer
-
-            root_path = pathlib.Path(RECORDING_PATH)
-            root_path.mkdir(exist_ok=True)
-            dataset_path = (
-                root_path
-                / f"{robot_name}/{scene_name}"
-                / f"lin_vel={ref_base_lin_vel} ang_vel={ref_base_ang_vel} friction={FRICTION_COEFF}"
-                / f"ep={N_EPISODES}_steps={int(NUM_SECONDS_PER_EPISODE // simulation_dt):d}.h5"
-            )
-            h5py_writer = H5Writer(
-                file_path=dataset_path,
-                env=env,
-                extra_obs=None,  # TODO: Make this automatically configured. Not hardcoded
-            )
-            print(f"\n Recording data to: {dataset_path.absolute()}")
-        else:
-            h5py_writer = None
+        root_path = pathlib.Path(RECORDING_PATH)
+        root_path.mkdir(exist_ok=True)
+        save_path = pathlib.Path(
+            root_path
+            / f"{robot_name}/{scene_name}"
+            / f"lin_vel={ref_base_lin_vel} ang_vel={ref_base_ang_vel} friction={FRICTION_COEFF}"
+            / f"ep={N_EPISODES}_steps={int(NUM_SECONDS_PER_EPISODE // simulation_dt):d}"
+        )
+        hist_path = save_path / "state_hist.pkl"
+        hist_path.parent.mkdir(parents=True, exist_ok=True)
 
         # -----------------------------------------------------------------------------------------------------------
         RENDER_FREQ = 30  # Hz
@@ -190,6 +179,7 @@ if __name__ == "__main__":
         last_render_time = time.time()
 
         state_obs_history, ctrl_state_history = [], []
+        num_terminations = 0
         for episode_num in range(N_EPISODES):
             ep_state_history, ep_ctrl_state_history, ep_time = [], [], []
             for _ in tqdm(range(N_STEPS_PER_EPISODE), desc=f"Ep:{episode_num:d}-steps:", total=N_STEPS_PER_EPISODE):
@@ -296,6 +286,7 @@ if __name__ == "__main__":
                 # Reset the environment if the episode is terminated ------------------------------------------------
                 if env.step_num >= N_STEPS_PER_EPISODE or is_terminated or is_truncated:
                     if is_terminated:
+                        num_terminations += 1
                         print(f"Environment terminated on trial: {trial}")
                     else:
                         state_obs_history.append(ep_state_history)
@@ -304,11 +295,18 @@ if __name__ == "__main__":
                     env.reset(random=True)
                     quadrupedpympc_wrapper.reset(initial_feet_pos=env.feet_pos(frame="world"))
 
-            if h5py_writer is not None:  # Save episode trajectory data to disk.
-                ep_obs_history = collate_obs(ep_state_history)  # | collate_obs(ep_ctrl_state_history)
-                ep_traj_time = np.asarray(ep_time)[:, np.newaxis]
-                h5py_writer.append_trajectory(state_obs_traj=ep_obs_history, time=ep_traj_time)
-                print(h5py_writer.file_path)
+        # Save all of the state information for one trial
+        with open(hist_path, 'wb') as f:
+            pickle.dump(state_obs_history, f)
+        with open(save_path / "failures.pkl", 'wb') as f:
+            pickle.dump(num_terminations, f)
+        # with open(failure_path, 'wb') as f:
+        #     pickle.dump(num_terminations, f)
+            # if h5py_writer is not None:  # Save episode trajectory data to disk.
+            #     ep_obs_history = collate_obs(ep_state_history)  # | collate_obs(ep_ctrl_state_history)
+            #     ep_traj_time = np.asarray(ep_time)[:, np.newaxis]
+            #     h5py_writer.append_trajectory(state_obs_traj=ep_obs_history, time=ep_traj_time)
+            #     print(h5py_writer.file_path)
 
         env.close()
 

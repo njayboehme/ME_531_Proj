@@ -1,7 +1,7 @@
 import numpy as np
 SEED = 0
 N_EPISODES = 100 # Number of episodes to run each trial
-NUM_SECONDS_PER_EPISODE = 60
+NUM_SECONDS_PER_EPISODE = 20
 RECORDING_PATH = 'tests'
 
 BASE_HEADING_VEL_VECS = [np.array([1, 0, 0]), np.array([1, 0, 0]), np.array([0, 1, 0]), np.array([0, 1, 0]), np.array([1, 0, 0]), np.array([1, 0, 0]), np.array([1, 0, 0])]
