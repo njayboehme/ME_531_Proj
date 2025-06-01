@@ -1,5 +1,6 @@
 import numpy as np
 SEED = 0
+NUM_PROCESSES = 5 # This creates NUM_PROCESSES-1 for some reason
 N_EPISODES = 100 # Number of episodes to run each trial
 NUM_SECONDS_PER_EPISODE = 20
 RECORDING_PATH = 'tests'
