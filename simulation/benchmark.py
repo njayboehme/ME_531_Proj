@@ -31,7 +31,7 @@ def run_sim(seed=0, postfix='a'):
     qpympc_cfg = cfg
     render = False
     np.set_printoptions(precision=3, suppress=True)
-    for trial in range(3, N_TRIALS):
+    for trial in range(N_TRIALS):
         qpympc_cfg = cfg
         # Added by Noah -----------
         if trial < 4:
