@@ -1,5 +1,3 @@
-# TODO: Noah and Sophie
-
 # Description: This script is used to simulate the full model of the robot in mujoco
 import pathlib
 
@@ -17,6 +15,8 @@ from gym_quadruped.utils.mujoco.visual import render_sphere, render_vector
 from gym_quadruped.utils.quadruped_utils import LegsAttr
 from tqdm import tqdm
 import pickle
+import multiprocessing
+from multiprocessing import Process
 
 # Helper functions for plotting
 from quadruped_pympc.helpers.quadruped_utils import plot_swing_mujoco
@@ -25,43 +25,23 @@ from quadruped_pympc.helpers.quadruped_utils import plot_swing_mujoco
 from quadruped_pympc.quadruped_pympc_wrapper import QuadrupedPyMPC_Wrapper
 
 from params import *
-
-
-def collate_obs(list_of_dicts) -> dict[str, np.ndarray]:
-    """Collates a list of dictionaries containing observation names and numpy arrays
-    into a single dictionary of stacked numpy arrays.
-    """
-    if not list_of_dicts:
-        raise ValueError("Input list is empty.")
-
-    # Get all keys (assumes all dicts have the same keys)
-    keys = list_of_dicts[0].keys()
-
-    # Stack the values per key
-    collated = {key: np.stack([d[key] for d in list_of_dicts], axis=0) for key in keys}
-    collated = {key: v[:, None] if v.ndim == 1 else v for key, v in collated.items()}
-    return collated
-
-
-if __name__ == "__main__":
+def run_sim(seed=0, postfix='a'):
     from quadruped_pympc import config as cfg
 
     qpympc_cfg = cfg
     render = False
-
-    # Run the simulation with the desired configuration.....
-    # run_simulation(qpympc_cfg=qpympc_cfg)
-
     np.set_printoptions(precision=3, suppress=True)
-    for trial in range(N_TRIALS):
+    for trial in range(3, N_TRIALS):
+        qpympc_cfg = cfg
         # Added by Noah -----------
         if trial < 4:
             base_vel_cmd = 'forward'
         else:
             base_vel_cmd = ['forward', 'rotate']
+        if trial == 6:
+            qpympc_cfg.simulation_params['gait'] = 'full_stance'
         # End added by Noah -----------
-        qpympc_cfg = cfg
-        np.random.seed(SEED)
+        np.random.seed(seed)
         ref_base_lin_vel = REF_BASE_LIN_VELS[trial]
         ref_base_ang_vel = REF_BASE_ANG_VELS[trial]
     
@@ -167,11 +147,10 @@ if __name__ == "__main__":
         save_path = pathlib.Path(
             root_path
             / f"{robot_name}/{scene_name}"
+            / f"trial{trial}"
             / f"lin_vel={ref_base_lin_vel} ang_vel={ref_base_ang_vel} friction={FRICTION_COEFF}"
             / f"ep={N_EPISODES}_steps={int(NUM_SECONDS_PER_EPISODE // simulation_dt):d}"
         )
-        hist_path = save_path / "state_hist.pkl"
-        hist_path.parent.mkdir(parents=True, exist_ok=True)
 
         # -----------------------------------------------------------------------------------------------------------
         RENDER_FREQ = 30  # Hz
@@ -180,7 +159,8 @@ if __name__ == "__main__":
 
         state_obs_history, ctrl_state_history = [], []
         num_terminations = 0
-        for episode_num in range(N_EPISODES):
+        ctr = 0
+        for episode_num in range(N_EPISODES // (NUM_PROCESSES)):
             ep_state_history, ep_ctrl_state_history, ep_time = [], [], []
             for _ in tqdm(range(N_STEPS_PER_EPISODE), desc=f"Ep:{episode_num:d}-steps:", total=N_STEPS_PER_EPISODE):
                 # Update value from SE or Simulator ----------------------
@@ -285,6 +265,11 @@ if __name__ == "__main__":
 
                 # Reset the environment if the episode is terminated ------------------------------------------------
                 if env.step_num >= N_STEPS_PER_EPISODE or is_terminated or is_truncated:
+                    hist_path = save_path / f"state_hist_{ctr}{postfix}.pkl"
+                    ctr += 1
+                    hist_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(hist_path, 'wb') as f:
+                        pickle.dump(ep_state_history, f)
                     if is_terminated:
                         num_terminations += 1
                         print(f"Environment terminated on trial: {trial}")
@@ -292,24 +277,36 @@ if __name__ == "__main__":
                         state_obs_history.append(ep_state_history)
                         ctrl_state_history.append(ep_ctrl_state_history)     
 
-                    env.reset(random=True)
+                    env.reset(random=False)
                     quadrupedpympc_wrapper.reset(initial_feet_pos=env.feet_pos(frame="world"))
 
         # Save all of the state information for one trial
-        with open(hist_path, 'wb') as f:
-            pickle.dump(state_obs_history, f)
-        with open(save_path / "failures.pkl", 'wb') as f:
+        # with open(hist_path, 'wb') as f:
+        #     pickle.dump(state_obs_history, f)
+        with open(save_path / f"failures_{postfix}.pkl", 'wb') as f:
             pickle.dump(num_terminations, f)
-        # with open(failure_path, 'wb') as f:
-        #     pickle.dump(num_terminations, f)
-            # if h5py_writer is not None:  # Save episode trajectory data to disk.
-            #     ep_obs_history = collate_obs(ep_state_history)  # | collate_obs(ep_ctrl_state_history)
-            #     ep_traj_time = np.asarray(ep_time)[:, np.newaxis]
-            #     h5py_writer.append_trajectory(state_obs_traj=ep_obs_history, time=ep_traj_time)
-            #     print(h5py_writer.file_path)
 
         env.close()
 
-    # if h5py_writer is not None:
-    #     return h5py_writer.file_path
+if __name__ == "__main__":
+    
+    # run_sim()
+    
+    # Run the simulation in parallel
+    processes = []
+    manager = multiprocessing.Manager()
+    return_dict = manager.dict()
+    postfix = 'a'
+    for i in range(NUM_PROCESSES):        
+        p = Process(
+            target=run_sim,
+            args=(i*NUM_PROCESSES, postfix),
+        )
+        p.start()
+        time.sleep(2)
+        processes.append(p)
+        postfix = chr(ord(postfix) + 1)
+
+    for p in processes:
+        p.join()
 
