@@ -56,13 +56,14 @@ def run_sim(seed=0, postfix='a'):
 
         # Save all observables available.
         state_obs_names = list(QuadrupedEnv.ALL_OBS)  # + list(IMU.ALL_OBS)
+        scale_factor = VELOCITY_SCALE_FACTOR[trial]
 
         # Create the quadruped robot environment -----------------------------------------------------------
         env = QuadrupedEnv(
             robot=robot_name,
             scene=scene_name,
             sim_dt=simulation_dt,
-            ref_base_lin_vel=np.asarray(ref_base_lin_vel) * hip_height,  # pass a float for a fixed value
+            ref_base_lin_vel=ref_base_lin_vel * scale_factor,  # pass a float for a fixed value
             ref_base_ang_vel=ref_base_ang_vel,  # pass a float for a fixed value
             ground_friction_coeff=FRICTION_COEFF,  # pass a float for a fixed value
             base_vel_command_type=base_vel_cmd,  # "forward", "random", "forward+rotate", "human"
@@ -147,7 +148,7 @@ def run_sim(seed=0, postfix='a'):
         save_path = pathlib.Path(
             root_path
             / f"{robot_name}/{scene_name}"
-            / f"trial{trial}"
+            / f"trial{trial}_nominal"
             / f"lin_vel={ref_base_lin_vel} ang_vel={ref_base_ang_vel} friction={FRICTION_COEFF}"
             / f"ep={N_EPISODES}_steps={int(NUM_SECONDS_PER_EPISODE // simulation_dt):d}"
         )
@@ -159,10 +160,14 @@ def run_sim(seed=0, postfix='a'):
 
         state_obs_history, ctrl_state_history = [], []
         num_terminations = 0
+        termination_step = []
         ctr = 0
         for episode_num in range(N_EPISODES // (NUM_PROCESSES)):
             ep_state_history, ep_ctrl_state_history, ep_time = [], [], []
-            for _ in tqdm(range(N_STEPS_PER_EPISODE), desc=f"Ep:{episode_num:d}-steps:", total=N_STEPS_PER_EPISODE):
+            for cur_step in tqdm(range(N_STEPS_PER_EPISODE), desc=f"Ep:{episode_num:d}-steps:", total=N_STEPS_PER_EPISODE):
+                # if cur_step > 100 + prev_step_ctr:
+                    # env.base_lin_vel_range = (REF_BASE_LIN_VELS[trial], REF_BASE_LIN_VELS[trial])
+                    # env._ref_base_lin_vel_H = np.array([REF_BASE_LIN_VELS[trial], 0., 0.])
                 # Update value from SE or Simulator ----------------------
                 feet_pos = env.feet_pos(frame="world")
                 hip_pos = env.hip_positions(frame="world")
@@ -171,6 +176,14 @@ def run_sim(seed=0, postfix='a'):
                 base_ori_euler_xyz = env.base_ori_euler_xyz
                 base_pos = env.base_pos
                 com_pos = env.com
+                # print(f'Base pos: {base_pos}')
+                # print(f'com pos: {com_pos}')
+                # print(f'Base lin vel: {base_lin_vel}')
+                # print(f'Base ang vel: {base_ang_vel}')
+                            
+                # print()
+                
+                
 
                 # Get the reference base velocity in the world frame
                 ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel()
@@ -265,18 +278,22 @@ def run_sim(seed=0, postfix='a'):
 
                 # Reset the environment if the episode is terminated ------------------------------------------------
                 if env.step_num >= N_STEPS_PER_EPISODE or is_terminated or is_truncated:
+                    # prev_step_ctr = cur_step
                     hist_path = save_path / f"state_hist_{ctr}{postfix}.pkl"
                     ctr += 1
                     hist_path.parent.mkdir(parents=True, exist_ok=True)
                     with open(hist_path, 'wb') as f:
                         pickle.dump(ep_state_history, f)
                     if is_terminated:
+                        # env._ref_base_lin_vel_H = np.array([REF_BASE_LIN_VELS[trial] * 0.9, 0., 0.])
                         num_terminations += 1
+                        termination_step.append(cur_step)
                         print(f"Environment terminated on trial: {trial}")
                     else:
                         state_obs_history.append(ep_state_history)
                         ctrl_state_history.append(ep_ctrl_state_history)     
-
+                    # env.base_lin_vel_range = (REF_BASE_LIN_VELS[trial] * 0.9, REF_BASE_LIN_VELS[trial] * 0.9)
+                    # env._ref_base_lin_vel_H = np.array([REF_BASE_LIN_VELS[trial] * 0.9, 0., 0.])
                     env.reset(random=False)
                     quadrupedpympc_wrapper.reset(initial_feet_pos=env.feet_pos(frame="world"))
 
@@ -284,7 +301,8 @@ def run_sim(seed=0, postfix='a'):
         # with open(hist_path, 'wb') as f:
         #     pickle.dump(state_obs_history, f)
         with open(save_path / f"failures_{postfix}.pkl", 'wb') as f:
-            pickle.dump(num_terminations, f)
+            to_save = {'num_terminations':num_terminations, 'termination_step':termination_step}
+            pickle.dump(to_save, f)
 
         env.close()
 
